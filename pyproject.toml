@@ -1,0 +1,53 @@
+[project]
+name = "gitcrawl"
+version = "0.1.0"
+description = "Agentic GitHub repository quality evaluator, scored against clause.md"
+readme = "README.md"
+authors = [
+    { name = "imbaraniii", email = "baranidharans2005@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "agno>=1.0.0",
+    "mistralai>=1.0.0",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "typer>=0.12",
+    "rich>=13.7",
+    "python-dotenv>=1.0",
+    "groq>=1.7.0",
+    "google-genai>=2.22.0",
+]
+
+[project.scripts]
+gitcrawl = "gitcrawl.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "vcrpy>=6.0",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.30,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# Fixture repos under tests/fixtures/ are sample data for GitCrawl's own
+# tools to read, not real pytest tests — e.g. well_tested/tests/test_*.py
+# is content an investigator inspects, and must not be collected here.
+norecursedirs = ["tests/fixtures", ".venv", ".git"]
+
+[tool.ruff]
+line-length = 115
+target-version = "py311"
+# Fixture repos are arbitrary sample content for GitCrawl's tools to read,
+# not our code — never lint it.
+extend-exclude = ["tests/fixtures"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
