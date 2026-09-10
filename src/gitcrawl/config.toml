@@ -1,0 +1,60 @@
+# GitCrawl configuration — seeded from clause.md and docs/design.md §10.
+# Weights below must match clause.md §2.1 exactly; if you tune them, update
+# docs/clause.md's table too so the two stay in sync.
+
+# NOTE: provider is "google" (Gemini) for now — the third provider tried
+# today. Mistral's Free plan gates most models at 0 requests/minute
+# without enabling paid "API pay-as-you-go" (needs a card), and the one
+# model that does work there, ministral-8b-latest, proved too weak for
+# the investigator's multi-step tool loop (made 0 tool calls, fabricated
+# findings — see docs/design.md §12). Groq's genuinely no-card free tier
+# worked end-to-end but its daily token quota (confirmed: 200k/day, both
+# on gpt-oss-120b and -20b) was exhausted by today's live debugging.
+# Gemini has a no-card free tier and mature native tool-use + structured-
+# output support. Swap `provider` back to "mistral" or "groq" any time —
+# nothing else in the codebase needs to change (see agents/model_factory.py).
+[models]
+provider = "google"
+investigator = "gemini-3.5-flash-lite"
+scorer = "gemini-3.5-flash-lite"
+
+[budget]
+total_tool_calls = 120        # across all pillars, per run
+confirmation_calls = 3        # calls allowed to a pillar clamped early by the survey
+max_file_bytes = 100_000      # per-file read cap
+shortlist_size = 40           # max paths returned by a single list_directory call
+
+# Confirmed empirically: Groq's free tier caps at 8000 tokens/minute, and
+# 5 pillars run fully in parallel (each with an investigator + parser_model
+# + scorer call) blows through that within seconds — every pillar 429s and
+# abstains. Raise max_concurrent_agent_calls once on a paid tier.
+[concurrency]
+max_concurrent_agent_calls = 1   # fully serial — even 2-at-a-time still
+                                  # oversubscribes Groq free tier's TPM
+max_retries_on_rate_limit = 8
+retry_base_delay_seconds = 8.0
+
+[weights]
+code_health = 0.25
+test_coverage = 0.20
+ci_cd = 0.20
+issue_management = 0.20
+community = 0.15
+
+[clamps]
+no_tests_max = 2
+no_ci_max = 2
+no_readme_no_license_max = 3
+single_contributor_max = 5    # phase 3
+abstain_below_coverage = 0.25 # evidence_coverage floor; below this a pillar abstains
+
+[cache]
+clone_ttl_hours = 24
+rubric_version = "1.0"        # must track clause.md §6 Version
+tool_version = "1"             # bump when tool behavior changes (invalidates findings)
+filter_version = "1"           # bump when exclusion rules change (invalidates findings)
+
+[api_windows]                  # phase 3
+recent_prs = 50
+oldest_open_issues = 25
+recent_releases = 10
