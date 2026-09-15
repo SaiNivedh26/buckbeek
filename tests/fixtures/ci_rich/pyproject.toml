@@ -1,0 +1,9 @@
+[project]
+name = "ci-rich"
+version = "0.1.0"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.report]
+fail_under = 80

@@ -1,0 +1,6 @@
+name: setup
+runs:
+  using: composite
+  steps:
+    - run: pip install -e .
+      shell: bash

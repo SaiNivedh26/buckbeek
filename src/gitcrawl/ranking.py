@@ -16,17 +16,6 @@ _ENTRYPOINT_RE = re.compile(
     r"^(main|app|index|cli|server|__main__|setup|manage)\.\w+$", re.IGNORECASE
 )
 
-# Rough per-language "this file is unusually large" threshold, in lines.
-_SIZE_OUTLIER_LINES = 400
-
-
-def _line_count(path: Path) -> int:
-    try:
-        with path.open("r", encoding="utf-8", errors="ignore") as f:
-            return sum(1 for _ in f)
-    except OSError:
-        return 0
-
 
 def rank_candidates(root: Path, relative_paths: list[str], limit: int) -> list[str]:
     """Return up to `limit` paths from relative_paths, most informative first.

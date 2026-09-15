@@ -1,0 +1,7 @@
+on: workflow_call
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pytest --cov=src --cov-fail-under=80

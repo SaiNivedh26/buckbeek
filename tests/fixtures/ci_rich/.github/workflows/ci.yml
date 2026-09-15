@@ -1,0 +1,19 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: make lint
+  test:
+    uses: ./.github/workflows/reusable-test.yml
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./scripts/audit.sh
+      - run: echo "done"
