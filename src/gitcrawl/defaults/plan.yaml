@@ -1,0 +1,525 @@
+# GitCrawl Evaluation Plan
+#
+# Generated from a clause.md. Review it before approving:
+#   - checks:           deterministic collectors and their parameters ("why" says what each is for)
+#   - pillars.criteria: how each criterion is evaluated — measured (checks), judgement (an agent
+#                       question), or not_measurable (excluded from the score, with a reason)
+#   - pillars.rules:    the clause.md hard rules as checkable expressions (cap or abstain)
+#   - judgement_tasks:  the questions agents will answer
+#   - agents:           computed by GitCrawl from the tasks (one per evidence domain)
+#
+# Pillar names, weights, bands and criteria text come from clause.md — change them there.
+# Approve with:  gitcrawl plan approve <this file>
+# Any edit after approval requires approving again.
+
+plan_format: 1
+rubric_title: Repository Quality Evaluation
+rubric_version: '2.0'
+rubric_hash: 2dd11ecff4d60ca0
+rubric_path: null
+catalog_version: 7d07171765eb
+planner_model: hand-written default (reviewed)
+created_at: '2026-09-15T00:00:00Z'
+approved: true
+approved_hash: 93d687dac91fa7a7
+checks:
+- id: inventory
+  collector: repo.inventory
+  params: {}
+  why: README/LICENSE/CONTRIBUTING/templates presence; file counts
+- id: code_structure
+  collector: code.structure
+  params: {}
+  why: file sizes, god-file candidates, docs density
+- id: code_imports
+  collector: code.imports
+  params: {}
+  why: coupling hot spots and import cycles
+- id: tests_inventory
+  collector: tests.inventory
+  params: {}
+  why: whether tests exist, frameworks, unit/integration/e2e split
+- id: tests_mapping
+  collector: tests.mapping
+  params: {}
+  why: which source modules tests reach
+- id: tests_coverage
+  collector: tests.coverage
+  params: {}
+  why: coverage reports, thresholds, badges
+- id: ci_config
+  collector: ci.config
+  params: {}
+  why: CI systems, triggers, classified steps, gates
+- id: workflow_runs
+  collector: github.workflow_runs
+  params: {}
+  why: CI pass rates and failure streak
+- id: github_issues
+  collector: github.issues
+  params: {}
+  why: close rate, staleness, maintainer response, labels
+- id: github_prs
+  collector: github.pull_requests
+  params: {}
+  why: review latency and review-before-merge
+- id: github_repo
+  collector: github.repo
+  params: {}
+  why: stars, forks, watchers, recent activity
+- id: contributors
+  collector: github.contributors
+  params: {}
+  why: contributor count and commit concentration
+- id: releases
+  collector: github.releases
+  params: {}
+  why: release cadence and notes
+pillars:
+- id: code_health
+  name: Code Health
+  weight: 0.25
+  focus: Structure, modularity, readability, and maintainability of the codebase.
+  bands:
+  - low: 0
+    high: 2
+    text: No clear structure; mixed concerns everywhere; very large god files or folders; no recognizable architecture
+      or patterns.
+  - low: 3
+    high: 5
+    text: Some modularization but inconsistent; occasional tangled dependencies or duplicated logic; basic separation
+      of concerns but many smells.
+  - low: 6
+    high: 8
+    text: Clear modular structure by feature, layer, or domain; reasonable file sizes and cohesive modules; follows
+      a known pattern with minor issues.
+  - low: 9
+    high: 10
+    text: Very clean, well-documented architecture; strong separation of concerns, low coupling, high cohesion;
+      minimal duplication, consistent patterns, easy to navigate.
+  criteria:
+  - id: code_health_1
+    text: The directory structure follows a recognizable architecture (layered, feature-based, or domain-based).
+    status: judgement
+    reason: ''
+    check_ids: []
+    task_ids:
+    - architecture_coupling
+  - id: code_health_2
+    text: Modules are cohesive with clear separation of concerns and low coupling between them.
+    status: judgement
+    reason: ''
+    check_ids: []
+    task_ids:
+    - architecture_coupling
+  - id: code_health_3
+    text: There are no oversized "god" files or folders; file sizes are reasonable.
+    status: measured
+    reason: ''
+    check_ids:
+    - code_structure
+    task_ids: []
+  - id: code_health_4
+    text: Duplicated logic across the codebase is minimal.
+    status: judgement
+    reason: ''
+    check_ids: []
+    task_ids:
+    - duplication
+  - id: code_health_5
+    text: Code is readable and documented (docstrings or comments, architecture docs where needed).
+    status: judgement
+    reason: ''
+    check_ids: []
+    task_ids:
+    - readability_docs
+  rules: []
+- id: test_coverage
+  name: Test Coverage
+  weight: 0.2
+  focus: Presence, breadth, and quality of automated tests.
+  bands:
+  - low: 0
+    high: 2
+    text: No tests or only trivial smoke tests; no coverage data; core logic untested.
+  - low: 3
+    high: 5
+    text: Some unit tests but low coverage; critical paths partially tested; tests brittle or poorly structured.
+  - low: 6
+    high: 8
+    text: Good unit and integration coverage on core modules; coverage report shows moderate to high coverage; tests
+      organized, meaningful, and mostly reliable.
+  - low: 9
+    high: 10
+    text: High coverage on critical paths and most modules; clear test strategy (unit, integration, E2E); tests
+      well structured, documented, and stable.
+  criteria:
+  - id: test_coverage_1
+    text: Automated tests exist.
+    status: measured
+    reason: ''
+    check_ids:
+    - tests_inventory
+    task_ids: []
+  - id: test_coverage_2
+    text: Tests cover the core modules and critical paths, not just a few files.
+    status: measured
+    reason: ''
+    check_ids:
+    - tests_mapping
+    task_ids: []
+  - id: test_coverage_3
+    text: Coverage data exists (coverage reports, badges, or coverage collected in CI) and shows the coverage level.
+    status: measured
+    reason: ''
+    check_ids:
+    - tests_coverage
+    task_ids: []
+  - id: test_coverage_4
+    text: There is a clear test strategy mixing unit, integration, and end-to-end tests.
+    status: measured
+    reason: ''
+    check_ids:
+    - tests_inventory
+    task_ids: []
+  - id: test_coverage_5
+    text: Tests are meaningful, well organized, and reliable rather than trivial smoke tests.
+    status: judgement
+    reason: ''
+    check_ids: []
+    task_ids:
+    - test_quality
+  - id: test_coverage_6
+    text: CI runs the test suite.
+    status: measured
+    reason: ''
+    check_ids:
+    - ci_config
+    task_ids: []
+  rules:
+  - id: test_coverage_rule_1
+    source_text: If the repository has no test files, score is at most 2.
+    when: tests_inventory.test_file_count == 0
+    action: cap
+    cap: 2
+- id: ci_cd
+  name: CI/CD
+  weight: 0.2
+  focus: Automation, reliability, and quality gates in pipelines.
+  bands:
+  - low: 0
+    high: 2
+    text: No CI/CD configured, or pipelines are always failing or not run on pull requests.
+  - low: 3
+    high: 5
+    text: Basic CI present (build and some tests); intermittent failures; limited quality gates; flaky or inconsistent
+      runs.
+  - low: 6
+    high: 8
+    text: CI runs on every push and pull request; includes lint, tests, and basic security checks; mostly green
+      with occasional failures.
+  - low: 9
+    high: 10
+    text: Robust CI/CD with a high first-attempt pass rate; enforced quality gates (coverage thresholds, lint, security
+      scans); reliable build, test, and deployment pipelines.
+  criteria:
+  - id: ci_cd_1
+    text: CI/CD pipelines are configured.
+    status: measured
+    reason: ''
+    check_ids:
+    - ci_config
+    task_ids: []
+  - id: ci_cd_2
+    text: Pipelines run on every push and pull request.
+    status: measured
+    reason: ''
+    check_ids:
+    - ci_config
+    task_ids: []
+  - id: ci_cd_3
+    text: Pipelines include lint, test, security, and build steps.
+    status: measured
+    reason: ''
+    check_ids:
+    - ci_config
+    task_ids: []
+  - id: ci_cd_4
+    text: Quality gates are enforced (coverage thresholds, required lint or security checks).
+    status: measured
+    reason: ''
+    check_ids:
+    - ci_config
+    - tests_coverage
+    task_ids: []
+  - id: ci_cd_5
+    text: Pipeline runs are mostly green with a high first-attempt pass rate.
+    status: measured
+    reason: ''
+    check_ids:
+    - workflow_runs
+    task_ids: []
+  - id: ci_cd_6
+    text: Deployment is automated.
+    status: measured
+    reason: ''
+    check_ids:
+    - ci_config
+    task_ids: []
+  rules:
+  - id: ci_cd_rule_1
+    source_text: If the repository has no CI configuration, score is at most 2.
+    when: not ci_config.has_ci
+    action: cap
+    cap: 2
+  - id: ci_cd_rule_2
+    source_text: If every recent CI run failed, score is at most 2.
+    when: workflow_runs.completed_runs > 0 and workflow_runs.success_rate == 0
+    action: cap
+    cap: 2
+- id: issue_management
+  name: Issue Management
+  weight: 0.2
+  focus: How issues and pull requests are tracked, triaged, and resolved.
+  bands:
+  - low: 0
+    high: 2
+    text: Many stale open issues with no activity; no labels, templates, or triage process; pull requests sit unreviewed
+      for long periods.
+  - low: 3
+    high: 5
+    text: Some issues closed regularly but many remain stale; basic labels or templates exist but are not used consistently;
+      review response times vary widely.
+  - low: 6
+    high: 8
+    text: Active triage with most issues addressed in reasonable time; clear labels, templates, and contribution
+      guidelines; pull requests reviewed promptly with good discussion.
+  - low: 9
+    high: 10
+    text: Very responsive maintainers who close most issues quickly; well-structured issue and pull request workflow
+      (templates, labels, bots); transparent backlog, milestones, and release planning.
+  criteria:
+  - id: issue_management_1
+    text: Issues are closed regularly and few open issues are stale.
+    status: measured
+    reason: ''
+    check_ids:
+    - github_issues
+    task_ids: []
+  - id: issue_management_2
+    text: Issues and pull requests use labels, templates, and milestones.
+    status: measured
+    reason: ''
+    check_ids:
+    - github_issues
+    - inventory
+    task_ids: []
+  - id: issue_management_3
+    text: Maintainers respond to issues and review pull requests promptly.
+    status: measured
+    reason: ''
+    check_ids:
+    - github_issues
+    - github_prs
+    task_ids: []
+  - id: issue_management_4
+    text: Contribution guidelines describe the issue and pull request workflow.
+    status: judgement
+    reason: ''
+    check_ids: []
+    task_ids:
+    - contributing_workflow
+  - id: issue_management_5
+    text: Discussion on issues and pull requests is constructive and helpful.
+    status: judgement
+    reason: ''
+    check_ids: []
+    task_ids:
+    - discussion_quality
+  rules: []
+- id: community
+  name: Community
+  weight: 0.15
+  focus: Adoption, contributor base, and long-term maintenance signals.
+  bands:
+  - low: 0
+    high: 2
+    text: Very low stars and forks; single contributor; no recent releases or activity; no evidence of adoption.
+  - low: 3
+    high: 5
+    text: Moderate stars and forks; small contributor base; irregular releases with some activity; limited but visible
+      adoption.
+  - low: 6
+    high: 8
+    text: Healthy stars and forks; multiple active contributors; regular releases with meaningful changelogs; clear
+      signs of adoption.
+  - low: 9
+    high: 10
+    text: Strong community with many contributors and users; frequent, well-documented releases; widely adopted
+      and referenced.
+  criteria:
+  - id: community_1
+    text: Stars, forks, and watchers show adoption.
+    status: measured
+    reason: ''
+    check_ids:
+    - github_repo
+    task_ids: []
+  - id: community_2
+    text: There are multiple active contributors and commits are not concentrated in one person.
+    status: measured
+    reason: ''
+    check_ids:
+    - contributors
+    task_ids: []
+  - id: community_3
+    text: Releases are regular and come with meaningful changelogs.
+    status: judgement
+    reason: ''
+    check_ids: []
+    task_ids:
+    - release_notes
+  - id: community_4
+    text: The project shows recent activity and ongoing maintenance.
+    status: measured
+    reason: ''
+    check_ids:
+    - github_repo
+    task_ids: []
+  - id: community_5
+    text: The project has a README and a license.
+    status: measured
+    reason: ''
+    check_ids:
+    - inventory
+    task_ids: []
+  - id: community_6
+    text: There is evidence of external adoption (dependents, tutorials, talks, or blog posts).
+    status: not_measurable
+    reason: dependents, tutorials, talks and blog mentions are not available from repository files or the GitHub
+      API data GitCrawl collects
+    check_ids: []
+    task_ids: []
+  rules:
+  - id: community_rule_1
+    source_text: If the repository has no README and no license, score is at most 3.
+    when: not inventory.has_readme and not inventory.has_license
+    action: cap
+    cap: 3
+  - id: community_rule_2
+    source_text: If the repository has a single contributor, score is at most 5.
+    when: contributors.contributor_count <= 1
+    action: cap
+    cap: 5
+judgement_tasks:
+- id: architecture_coupling
+  pillar_id: code_health
+  criterion_ids:
+  - code_health_1
+  - code_health_2
+  question: Does the codebase follow a recognizable architecture (layered, feature-based or domain-based), and do
+    modules keep a clear separation of concerns with low coupling? Read a few representative files from different
+    top-level modules, including the most-imported ones and any import cycles, and check whether the structure the
+    layout suggests actually holds in the imports.
+  evidence_domain: source_code
+  check_ids:
+  - code_structure
+  - code_imports
+- id: duplication
+  pillar_id: code_health
+  criterion_ids:
+  - code_health_4
+  question: Is there noticeable duplicated logic across the files you read (copy-pasted functions, parallel implementations
+    of the same behaviour)? Use search to confirm any suspected duplication.
+  evidence_domain: source_code
+  check_ids:
+  - code_structure
+- id: readability_docs
+  pillar_id: code_health
+  criterion_ids:
+  - code_health_5
+  question: Is the code you read readable (clear naming, reasonable function size, consistent style) and documented
+    where it matters (docstrings or comments on non-obvious code, architecture notes)?
+  evidence_domain: source_code
+  check_ids:
+  - code_structure
+- id: test_quality
+  pillar_id: test_coverage
+  criterion_ids:
+  - test_coverage_5
+  question: Are the tests meaningful and well organized — do they assert real behaviour of core logic, cover edge
+    cases and failure paths — or are they trivial smoke tests? Read two or three test files that exercise core modules.
+  evidence_domain: tests
+  check_ids:
+  - tests_inventory
+  - tests_mapping
+- id: contributing_workflow
+  pillar_id: issue_management
+  criterion_ids:
+  - issue_management_4
+  question: Do the contribution guidelines and issue or pull request templates clearly describe how to report issues
+    and submit pull requests? If no such files exist, say so.
+  evidence_domain: docs_community
+  check_ids:
+  - inventory
+- id: discussion_quality
+  pillar_id: issue_management
+  criterion_ids:
+  - issue_management_5
+  question: Is discussion on issues and pull requests constructive and helpful — do maintainers engage with reporters,
+    ask clarifying questions and explain decisions? Read two or three of the sample issue and pull request threads.
+  evidence_domain: issues_prs
+  check_ids:
+  - github_issues
+  - github_prs
+- id: release_notes
+  pillar_id: community
+  criterion_ids:
+  - community_3
+  question: Are releases regular, and do their notes or the CHANGELOG meaningfully describe what changed? Read the
+    latest release notes or the top of the CHANGELOG.
+  evidence_domain: docs_community
+  check_ids:
+  - releases
+  - inventory
+agents:
+- id: source_code_agent
+  evidence_domain: source_code
+  task_ids:
+  - architecture_coupling
+  - duplication
+  - readability_docs
+  tools:
+  - list_directory
+  - read_file
+  - search_repo
+  budget: 30
+- id: tests_agent
+  evidence_domain: tests
+  task_ids:
+  - test_quality
+  tools:
+  - list_directory
+  - read_file
+  - search_repo
+  budget: 8
+- id: issues_prs_agent
+  evidence_domain: issues_prs
+  task_ids:
+  - discussion_quality
+  tools:
+  - get_issue_thread
+  - get_pull_request_thread
+  - read_file
+  budget: 6
+- id: docs_community_agent
+  evidence_domain: docs_community
+  task_ids:
+  - contributing_workflow
+  - release_notes
+  tools:
+  - list_directory
+  - read_file
+  - search_repo
+  - get_release_notes
+  budget: 4
