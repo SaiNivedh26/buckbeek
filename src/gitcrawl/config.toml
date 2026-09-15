@@ -1,60 +1,71 @@
-# GitCrawl configuration — seeded from clause.md and docs/design.md §10.
-# Weights below must match clause.md §2.1 exactly; if you tune them, update
-# docs/clause.md's table too so the two stay in sync.
+# GitCrawl configuration: models, budgets, pacing, GitHub access and caching.
+#
+# The rubric — pillars, weights, criteria, score bands, hard rules — is NOT
+# configured here. It comes from clause.md (bundled default:
+# src/gitcrawl/defaults/clause.md) and the approved plan generated from it.
 
-# NOTE: provider is "google" (Gemini) for now — the third provider tried
-# today. Mistral's Free plan gates most models at 0 requests/minute
-# without enabling paid "API pay-as-you-go" (needs a card), and the one
-# model that does work there, ministral-8b-latest, proved too weak for
-# the investigator's multi-step tool loop (made 0 tool calls, fabricated
-# findings — see docs/design.md §12). Groq's genuinely no-card free tier
-# worked end-to-end but its daily token quota (confirmed: 200k/day, both
-# on gpt-oss-120b and -20b) was exhausted by today's live debugging.
-# Gemini has a no-card free tier and mature native tool-use + structured-
-# output support. Swap `provider` back to "mistral" or "groq" any time —
-# nothing else in the codebase needs to change (see agents/model_factory.py).
+# Provider notes (all confirmed empirically):
+#
+#   google — gemini-3.5-flash-lite, no-card free tier. Validated on tool use +
+#     structured output together. Current default for this reason.
+#
+#   mistral — this account's tier 403s on mistral-large-latest and gates
+#     small/medium at 0 requests/minute (needs paid pay-as-you-go, which asks
+#     for a card). ministral-8b-latest works but its structured output is
+#     unreliable on real schemas; fine as a fallback, not for complete reports.
+#
+#   groq — genuinely no-card free tier and worked end-to-end, but the daily
+#     token quota (200k/day) is easy to exhaust. gpt-oss rejects JSON mode
+#     combined with tool calling, which is why judgement agents set parser_model.
+#
+# Swapping providers needs no code change (see agents/model_factory.py).
+# Model ids are part of every cached model output's key: changing one re-runs
+# only that stage (facts stay cached).
 [models]
 provider = "google"
-investigator = "gemini-3.5-flash-lite"
-scorer = "gemini-3.5-flash-lite"
+investigator = "gemini-3.5-flash-lite"   # judgement agents
+scorer = "gemini-3.5-flash-lite"         # pillar scorers
+planner = "gemini-3.5-flash-lite"        # clause.md -> plan (one call per rubric)
 
 [budget]
-total_tool_calls = 120        # across all pillars, per run
-confirmation_calls = 3        # calls allowed to a pillar clamped early by the survey
-max_file_bytes = 100_000      # per-file read cap
-shortlist_size = 40           # max paths returned by a single list_directory call
+max_file_bytes = 100_000      # per-file read cap, for collectors and agent tools
+shortlist_size = 40           # max paths returned by list_directory "."
 
-# Confirmed empirically: Groq's free tier caps at 8000 tokens/minute, and
-# 5 pillars run fully in parallel (each with an investigator + parser_model
-# + scorer call) blows through that within seconds — every pillar 429s and
-# abstains. Raise max_concurrent_agent_calls once on a paid tier.
+# Free tiers have tiny per-minute limits; several agents at once 429s every one.
 [concurrency]
-max_concurrent_agent_calls = 1   # fully serial — even 2-at-a-time still
-                                  # oversubscribes Groq free tier's TPM
+max_concurrent_agent_calls = 1
 max_retries_on_rate_limit = 8
 retry_base_delay_seconds = 8.0
 
-[weights]
-code_health = 0.25
-test_coverage = 0.20
-ci_cd = 0.20
-issue_management = 0.20
-community = 0.15
+# Model requests per minute, per provider — requests are spaced to stay under
+# free-tier limits instead of hitting 429s (see agents/limiter.py).
+[rate_limits.requests_per_minute]
+google = 10
+groq = 20
+mistral = 30
 
-[clamps]
-no_tests_max = 2
-no_ci_max = 2
-no_readme_no_license_max = 3
-single_contributor_max = 5    # phase 3
-abstain_below_coverage = 0.25 # evidence_coverage floor; below this a pillar abstains
+# Tool-call budget for each judgement agent, by evidence domain. Agents are
+# grouped by the kind of evidence they need (see plan/agents.py).
+[agents.budgets]
+source_code = 30
+tests = 8
+ci = 6
+issues_prs = 6
+docs_community = 4
+
+# GitHub API access. The token is read from GITHUB_TOKEN (or GH_TOKEN) in
+# .env — a free, read-only fine-grained token is enough for public repos.
+[github]
+snapshot_ttl_hours = 24        # API facts (issues, PRs, CI runs) re-fetched after this
+timeout_seconds = 20.0
+max_retries = 3
+
+[api_windows]                  # bounded windows — never enumerate full history
+recent_prs = 50
+recent_issues = 50
+oldest_open_issues = 25
+recent_releases = 10
+recent_workflow_runs = 50
 
 [cache]
 clone_ttl_hours = 24
-rubric_version = "1.0"        # must track clause.md §6 Version
-tool_version = "1"             # bump when tool behavior changes (invalidates findings)
-filter_version = "1"           # bump when exclusion rules change (invalidates findings)
-
-[api_windows]                  # phase 3
-recent_prs = 50
-oldest_open_issues = 25
-recent_releases = 10

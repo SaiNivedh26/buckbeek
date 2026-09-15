@@ -1,5 +1,8 @@
-"""Configuration loading — config.toml is the single source of truth for
-weights, clamps, budgets, and model ids. See docs/design.md §10.
+"""Configuration loading. config.toml holds models, budgets, pacing, GitHub
+access and caching settings.
+
+The rubric — pillars, weights, criteria, score bands, hard rules — is NOT
+configuration: it comes from clause.md and the approved plan built from it.
 """
 
 from __future__ import annotations
@@ -8,87 +11,77 @@ import tomllib
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, model_validator
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-# The five clause.md pillars, in rubric order. Used everywhere a fixed
-# ordering or an exhaustive set of pillar names is needed.
-PILLARS: tuple[str, ...] = (
-    "code_health",
-    "test_coverage",
-    "ci_cd",
-    "issue_management",
-    "community",
-)
 
 DEFAULT_CONFIG_PATH = Path(__file__).parent / "config.toml"
 
 
 class ModelsConfig(BaseSettings):
-    # Which Agno model class to build — see agents/model_factory.py for
-    # the supported set. Kept separate from the model id so swapping
-    # providers (e.g. Mistral -> Groq while billing is unresolved, see
-    # config.toml) never touches investigators.py or scorers.py.
-    provider: str = "mistral"
-    investigator: str = "mistral-large-latest"
-    scorer: str = "mistral-large-latest"
+    # Which Agno model class to build — see agents/model_factory.py for the
+    # supported set. Kept separate from model ids so swapping providers never
+    # touches agent code.
+    provider: str = "google"
+    investigator: str = "gemini-3.5-flash-lite"  # judgement agents
+    scorer: str = "gemini-3.5-flash-lite"  # pillar scorers
+    planner: str | None = None  # None = use the scorer model
 
 
 class BudgetConfig(BaseSettings):
-    total_tool_calls: int = 120
-    confirmation_calls: int = 3
-    max_file_bytes: int = 100_000
-    shortlist_size: int = 40
+    max_file_bytes: int = 100_000  # per-file read cap for collectors and agent tools
+    shortlist_size: int = 40  # max paths returned by list_directory "."
 
 
 class ConcurrencyConfig(BaseSettings):
-    # How many agent .arun() calls (investigators + scorers combined) may
-    # be in flight at once. Free-tier providers have low tokens-per-minute
-    # ceilings (confirmed on Groq: 8000 TPM) that 5 pillars run fully in
-    # parallel blow through immediately — see docs/design.md §12. Raise
-    # this once on a paid tier with real headroom.
-    max_concurrent_agent_calls: int = 2
-    max_retries_on_rate_limit: int = 4
+    # How many agent runs may be in flight at once. Free-tier providers have
+    # low per-minute ceilings; running several at once 429s every one of them.
+    max_concurrent_agent_calls: int = 1
+    max_retries_on_rate_limit: int = 8
     retry_base_delay_seconds: float = 8.0
 
 
-class WeightsConfig(BaseSettings):
-    code_health: float = 0.25
-    test_coverage: float = 0.20
-    ci_cd: float = 0.20
-    issue_management: float = 0.20
-    community: float = 0.15
-
-    def as_dict(self) -> dict[str, float]:
-        return {p: getattr(self, p) for p in PILLARS}
-
-    @model_validator(mode="after")
-    def _weights_sum_to_one(self) -> WeightsConfig:
-        total = sum(self.as_dict().values())
-        if abs(total - 1.0) > 1e-6:
-            raise ValueError(f"pillar weights must sum to 1.0, got {total}")
-        return self
+class RateLimitsConfig(BaseSettings):
+    # Model requests per minute, per provider. Kept under each free tier's
+    # limit so runs pace themselves instead of hitting 429s.
+    requests_per_minute: dict[str, float] = Field(
+        default_factory=lambda: {"google": 10, "groq": 20, "mistral": 30}
+    )
 
 
-class ClampsConfig(BaseSettings):
-    no_tests_max: float = 2
-    no_ci_max: float = 2
-    no_readme_no_license_max: float = 3
-    single_contributor_max: float = 5
-    abstain_below_coverage: float = 0.25
+class AgentsConfig(BaseSettings):
+    # Tool-call budget per judgement agent, by evidence domain. Source code
+    # gets the most: it's the one domain where exploration is the job.
+    budgets: dict[str, int] = Field(
+        default_factory=lambda: {
+            "source_code": 30,
+            "tests": 8,
+            "ci": 6,
+            "issues_prs": 6,
+            "docs_community": 4,
+        }
+    )
+    default_budget: int = 6
+
+
+class GitHubConfig(BaseSettings):
+    # GitHub API facts change without the commit changing (issues, PRs, CI
+    # runs), so they're cached per time bucket of this many hours.
+    snapshot_ttl_hours: int = 24
+    timeout_seconds: float = 20.0
+    max_retries: int = 3
+
+
+class ApiWindowsConfig(BaseSettings):
+    # Bounded windows — the rubric needs rates and ratios, never full history.
+    recent_prs: int = 50
+    recent_issues: int = 50
+    oldest_open_issues: int = 25
+    recent_releases: int = 10
+    recent_workflow_runs: int = 50
 
 
 class CacheConfig(BaseSettings):
     clone_ttl_hours: int = 24
-    rubric_version: str = "1.0"
-    tool_version: str = "1"
-    filter_version: str = "1"
-
-
-class ApiWindowsConfig(BaseSettings):
-    recent_prs: int = 50
-    oldest_open_issues: int = 25
-    recent_releases: int = 10
 
 
 class GitCrawlConfig(BaseSettings):
@@ -101,10 +94,11 @@ class GitCrawlConfig(BaseSettings):
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
     concurrency: ConcurrencyConfig = Field(default_factory=ConcurrencyConfig)
-    weights: WeightsConfig = Field(default_factory=WeightsConfig)
-    clamps: ClampsConfig = Field(default_factory=ClampsConfig)
-    cache: CacheConfig = Field(default_factory=CacheConfig)
+    rate_limits: RateLimitsConfig = Field(default_factory=RateLimitsConfig)
+    agents: AgentsConfig = Field(default_factory=AgentsConfig)
+    github: GitHubConfig = Field(default_factory=GitHubConfig)
     api_windows: ApiWindowsConfig = Field(default_factory=ApiWindowsConfig)
+    cache: CacheConfig = Field(default_factory=CacheConfig)
 
 
 def load_config(path: Path | None = None) -> GitCrawlConfig:
