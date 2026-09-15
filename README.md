@@ -1,172 +1,137 @@
 # GitCrawl
 
-Agentic GitHub repository quality evaluator.
+Evaluate a GitHub repository against **your own rubric**.
 
-GitCrawl scores a repository against a five-pillar rubric — Code Health, Test
-Coverage, CI/CD, Issue Management, Community — by actually investigating it, not
-by pattern-matching filenames. Agents explore the repo with read-only tools,
-report findings with file-path citations, and a separate scoring tier places each
-pillar in a rubric band. The final score is arithmetic, never a model's summary
-judgment.
+You write the rubric as a `clause.md`: pillars, weights, criteria, score bands and hard
+rules. GitCrawl turns it into an **Evaluation Plan** that you review and approve. Then it
+evaluates any GitHub repository with that plan:
 
-The rubric lives in [`docs/clause.md`](docs/clause.md); the design rationale is in
-[`docs/design.md`](docs/design.md).
+- **Tested collectors** gather facts deterministically, from repository files and the GitHub API.
+- **Agents** answer only the questions that genuinely need judgement.
+- **Code** decides caps, abstentions and the final arithmetic.
+
+A default rubric and plan are bundled, so it works out of the box.
 
 ## Install
 
 ```bash
 uv sync
-```
-
-Then add an API key. Copy `.env.example` to `.env` and fill in the key for
-whichever provider you're using:
-
-```bash
 cp .env.example .env
 ```
 
-The default configuration uses Google's Gemini (`GOOGLE_API_KEY`, or
-`GEMINI_API_KEY` — both are accepted). Mistral and Groq are also supported; change
-`[models].provider` in `src/gitcrawl/config.toml` and set the matching key.
+Add two keys to `.env`:
+
+| Key | Needed for | Where |
+|---|---|---|
+| `GOOGLE_API_KEY` (or `GEMINI_API_KEY`) | `plan`, `evaluate` | Google AI Studio, free tier |
+| `GITHUB_TOKEN` | GitHub data (issues, PRs, contributors, releases, CI runs) | GitHub → Settings → Developer settings → Fine-grained tokens, read-only public repositories |
+
+Mistral and Groq are also supported: change `[models].provider` in `src/gitcrawl/config.toml`.
 
 ## Usage
 
-### Survey — free, instant, no model calls
-
 ```bash
-uv run gitcrawl survey https://github.com/psf/requests
+# Facts only: collectors, no model calls, no cost
+uv run gitcrawl facts imbaraniii/relink
+
+# Evaluate with the bundled rubric and plan
+uv run gitcrawl evaluate https://github.com/imbaraniii/relink
+
+# Your own rubric
+uv run gitcrawl plan my_clause.md -o my_plan.yaml     # one model call: draft plan
+uv run gitcrawl plan approve my_plan.yaml             # after reviewing it
+uv run gitcrawl evaluate owner/repo --plan my_plan.yaml
 ```
 
-Walks the file tree once and reports what's there: file counts, what was excluded
-as vendored or generated, and presence flags for tests, CI, README, LICENSE. It
-also fires **early clamps** — if there are no test files, Test Coverage is capped
-at 2 before a single token is spent.
+`evaluate` prints a score table, then a few lines per pillar explaining how the score was reached:
+- the reasoning;
+- any hard rule that capped the score;
+- criteria that weren't measurable;
+- whether the repository tried to influence its own evaluation.
 
-This costs nothing and needs no API key. On a large batch of repos it's a cheap
-first pass: screen with `survey`, then spend model budget only on the survivors.
+`--json report.json` also writes the full report, including every fact and judgement.
 
-### Evaluate — the full pipeline
-
-```bash
-uv run gitcrawl evaluate https://github.com/psf/requests
-uv run gitcrawl evaluate .                          # a local checkout
-uv run gitcrawl evaluate . --pillar test_coverage   # one pillar only
-uv run gitcrawl evaluate . --json report.json       # machine-readable output
-```
-
-Example output:
-
-```
-┏━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ Pillar           ┃ Weight ┃ Score ┃ Weighted ┃ Notes                         ┃
-┡━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ Code Health      │    25% │     9 │     2.25 │ Clean modular architecture,   │
-│                  │        │       │          │ Zod schemas, low coupling     │
-│ Test Coverage    │    20% │     0 │     0.00 │ No test files, no test script │
-│ CI/CD            │    20% │     3 │     0.60 │ One workflow; no PR trigger,  │
-│                  │        │       │          │ no tests, no lint             │
-│ Issue Management │    20% │     — │        — │ not assessed                  │
-│ Community        │    15% │     3 │     0.45 │ README only; no CONTRIBUTING  │
-└──────────────────┴────────┴───────┴──────────┴───────────────────────────────┘
-
-Repository Quality Score: 4.12 / 10  (80% rubric coverage)
-
-Scope decisions
-  Examined 22 of 107 files (36 excluded as vendored/generated)
-  Budget: 49 / 120 tool calls used
-```
-
-The scope log is deliberate: if you think it missed something, you can see exactly
-what it skipped and why. Budget is allocated per pillar by weight and headroom —
-in the run above, Code Health got 48 calls while Test Coverage got 3, because the
-survey had already clamped it and there was nothing left to establish.
-
-### As a library
-
-Everything the CLI does is importable:
-
-```python
-from gitcrawl import evaluate, survey, investigate, score
-
-s        = survey(".")                              # no model calls
-findings = await investigate(".", pillar="code_health")
-verdict  = await score(findings)                    # re-score without re-reading
-report   = await evaluate(".")
-```
+See [`docs/clause.md`](docs/clause.md) for how to write a rubric.
 
 ## How it works
 
-A run is eight steps. Six are ordinary Python; two involve a model.
-
 ```
-1. Resolve repo, pin to a commit SHA                     code
-2. Survey: count files, set flags, allocate budget       code
-3. Five investigators explore in parallel → Findings     agents
-4. Cache findings to SQLite                              code
-5. Five scorers: findings + rubric → scores              agents
-6. Apply clamps                                          code
-7. Weight, renormalize for abstentions, total            code
-8. Render report                                         code
+PLAN (once per clause.md)                          EVALUATE (per repository)
+clause.md → parse (code) → planner (model)         preflight: plan approved and valid? (code)
+  → validate (code) → plan.yaml                    → collectors: facts (code, cached)
+  → you review → plan approve                      → hard rules: cap / not assessed (code)
+                                                   → judgement agents (models + tools)
+                                                   → pillar scorers (models, isolated)
+                                                   → caps, abstention, weighted total (code)
 ```
 
-Three properties are worth knowing about:
+**Each criterion in your rubric becomes one of three things:**
+- **Measured:** backed by a collector, for example `ci.config`, `tests.mapping` or `github.issues`.
+- **Judgement:** a focused question for an agent, for example "are the tests meaningful?".
+- **Not measurable:** excluded from the score with a stated reason, never guessed.
 
-**Investigation and scoring are separate.** An investigator produces observations
-with citations and no score; a scorer turns those into a number. Findings are
-cached independently of verdicts, so changing the rubric re-scores without
-re-reading the repo, and two scoring runs can be diffed over identical evidence.
+**Agents are grouped by the evidence they need, not by pillar.** One agent reads test code for
+every test-related question, so files aren't re-read across pillars. Scorers stay one per pillar,
+so a strong pillar can't lift a weak one.
 
-**Each pillar is investigated blind to the others.** The Test Coverage
-investigator never sees the README. Models are swayed by polish, and per-pillar
-isolation is what stops a good README from lifting every score.
+**Deterministic where it must be.** The planner can only choose collectors and fill in their
+parameters. It never writes code. Hard rules are small expressions that code parses and evaluates.
+Only the band and score within a pillar come from a model, and code still enforces the caps
+afterwards.
 
-**Missing evidence abstains rather than guessing.** Issue Management needs GitHub
-API data (issues, PRs, review latency) that this phase has no tools for, so it
-reports "not assessed" and the weights renormalize across what *was* assessed. The
-report always states its own coverage — `80% rubric coverage` above — rather than
-implying completeness.
+**Checked evidence.** An agent's citations are compared with the files and threads it actually
+opened, and unverified citations are reported.
 
-Clamps back this up from the other direction: a countable fact overrides the model.
-Zero test files caps Test Coverage at 2 no matter how confident the README is.
+**Collectors** (see `gitcrawl facts`):
+
+| Area | Collectors |
+|---|---|
+| Files | `repo.inventory`, `file.exists`, `file.count`, `file.contains`, `manifest.field` |
+| CI | `ci.config` (follows reusable workflows, composite actions, package scripts, Makefile targets) |
+| Tests | `tests.inventory`, `tests.mapping` (static test→source mapping), `tests.coverage` |
+| Code | `code.structure`, `code.imports` |
+| GitHub API | `github.repo`, `github.issues`, `github.pull_requests`, `github.contributors`, `github.releases`, `github.workflow_runs` |
+
+Design rationale: [`docs/design.md`](docs/design.md).
 
 ## Configuration
 
-`src/gitcrawl/config.toml` holds pillar weights (matching `clause.md`), clamp
-thresholds, tool-call budget, concurrency and retry settings, and model ids.
-Any value can be overridden by environment variable with a `GITCRAWL_` prefix.
+`src/gitcrawl/config.toml` holds:
+- model ids;
+- requests-per-minute pacing per provider;
+- agent tool budgets per evidence domain;
+- GitHub API windows;
+- cache TTLs.
 
-Rate limits are the main thing you'll tune. Free tiers are tight — the defaults
-are conservative (one agent call at a time, retries with backoff). On a paid tier,
-raise `max_concurrent_agent_calls` in `[concurrency]`.
+Any value can be overridden with a `GITCRAWL_` environment variable, for example
+`GITCRAWL_MODELS__SCORER`. The rubric itself is never configured here: it comes from `clause.md`.
+
+Results are cached in `~/.cache/gitcrawl/gitcrawl.db`.
+- **Repeat runs:** served from cache.
+- **Facts from files:** keyed by commit.
+- **GitHub facts:** refreshed daily.
+- **Model outputs:** keyed by their exact inputs.
+- **Failures:** never cached.
 
 ## Development
 
 ```bash
-uv run pytest tests/ -q          # 44 tests, fully offline — no API key needed
+uv run pytest tests/ -q        # fully offline: agents and GitHub are mocked
 uv run ruff check src/ tests/
 ```
 
-The test suite mocks agent calls, so it runs in about two seconds and costs
-nothing. `tests/fixtures/` holds small synthetic repos used as investigation
-targets — including one whose README contains a hidden instruction to score it
-10/10, which regression-tests prompt-injection resistance.
+`tests/fixtures/` holds small synthetic repositories. `ci_rich/` has real CI (a reusable workflow,
+a coverage gate, a Makefile lint target) and a deliberately untested module. `injection/` has a
+README that asks evaluators for 10/10.
 
-See [`CLAUDE.md`](CLAUDE.md) for the non-obvious constraints before changing
-anything structural.
+See [`CLAUDE.md`](CLAUDE.md) before changing anything structural.
 
-## Status and limits
+## Limits
 
-Phase 1: file-based evaluation. What that means in practice:
-
-- **Issue Management always abstains** — it needs the GitHub API (phase 3).
-- **Community is partial** — README, LICENSE and CHANGELOG are visible; stars,
-  forks, contributor counts and release cadence are not.
-- **CI/CD reads config, not history** — it can see whether a workflow lints and
-  tests, but not its actual pass rate.
-- **Scores are not yet calibrated.** Rubric bands are inherently fuzzy and models
-  drift generous. Calibration against hand-scored reference repos is the intended
-  next step; until then, treat the cited evidence as the trustworthy part and the
-  exact number as an estimate.
-- **A model that can connect isn't necessarily a model that works.** Tool use
-  combined with structured output is the flakiest combination across providers —
-  smoke-test a new provider or model before relying on it.
+- **GitHub repositories only.**
+- **Scores are not calibrated yet.** Treat the cited facts as the trustworthy part and the exact
+  number as an estimate.
+- **Test mapping is static.** It shows which modules any test imports or is named after, not
+  runtime coverage. Runtime coverage is only reported when a coverage report is committed.
+- **Adoption signals are not measurable.** Dependents and blog mentions aren't available, so the
+  default rubric reports them as excluded.
