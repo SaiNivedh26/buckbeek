@@ -1,5 +1,30 @@
+import pytest
 
-from gitcrawl.source import _cache_dir_for
+from gitcrawl.source import SourceError, _cache_dir_for, parse_github_target
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "https://github.com/imbaraniii/relink",
+        "https://github.com/imbaraniii/relink.git",
+        "https://github.com/imbaraniii/relink/",
+        "git@github.com:imbaraniii/relink.git",
+        "github.com/imbaraniii/relink",
+        "imbaraniii/relink",
+    ],
+)
+def test_parse_github_target_accepts_common_forms(target):
+    assert parse_github_target(target) == ("imbaraniii", "relink")
+
+
+@pytest.mark.parametrize(
+    "target",
+    ["https://gitlab.com/a/b", "https://github.com/a/b/tree/main", "./tests/fixtures/no_tests", "relink"],
+)
+def test_parse_github_target_refuses_non_github(target):
+    with pytest.raises(SourceError, match="GitHub repositories only"):
+        parse_github_target(target)
 
 
 def test_cache_dir_is_already_fully_resolved():

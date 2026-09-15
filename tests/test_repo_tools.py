@@ -79,3 +79,56 @@ def test_search_repo_finds_matches_and_excludes_junk():
     result = search_repo.entrypoint(pattern="def main")
     assert "src/app.py" in result
     assert "node_modules" not in result
+
+
+def test_read_file_limit_truncates_to_requested_line_count():
+    """A model asking for `limit` on a large file is a reasonable request
+    (e.g. a quick look at a long CHANGELOG without spending the whole
+    budget on it) — confirmed live that ministral-8b tried exactly this
+    and got a hard pydantic rejection because the parameter didn't exist.
+    """
+    _, read_file, _, _ = _tools(FIXTURES / "well_tested", calls=5)
+    full = read_file.entrypoint(path="src/parser.py")
+    limited = read_file.entrypoint(path="src/parser.py", limit=3)
+
+    assert limited != full
+    assert "truncated at 3 lines" in limited
+    assert len(full.splitlines()) > len(limited.splitlines())
+
+
+def test_failed_call_hook_counts_and_reraises():
+    """The regression this guards: a malformed call (extra kwarg the tool
+    doesn't accept) is rejected by pydantic before _meter() ever runs, so
+    it must not silently vanish from the scope log — it's still a real
+    API call a weaker model burned.
+
+    Note: `.entrypoint(...)` (used by every other test in this file) calls
+    the raw function directly and does NOT go through tool_hooks — Agno
+    only wraps hooks around the full agent-dispatch path (FunctionCall.
+    execute), a different call than the one these tests use. So the hook
+    itself is unit-tested directly here rather than through .entrypoint().
+    """
+    from gitcrawl.tools.repo_tools import _make_failed_call_hook
+
+    root = FIXTURES / "no_tests"
+    ledger = BudgetLedger(allocated={"test_coverage": 5}, spent={"test_coverage": 0})
+    ctx = ToolContext(root=root, pillar="test_coverage", ledger=ledger)
+    hook = _make_failed_call_hook(ctx)
+
+    def failing_func(**kwargs):
+        raise TypeError("unexpected keyword argument: offset")
+
+    try:
+        hook("read_file", failing_func, {"path": "src/app.py", "offset": 10})
+        raised = False
+    except TypeError:
+        raised = True
+
+    assert raised, "the hook must re-raise, not swallow, the underlying failure"
+    assert ledger.failed_calls.get("test_coverage", 0) == 1
+
+    def ok_func(**kwargs):
+        return "fine"
+
+    assert hook("read_file", ok_func, {"path": "src/app.py"}) == "fine"
+    assert ledger.failed_calls.get("test_coverage", 0) == 1  # unchanged on success

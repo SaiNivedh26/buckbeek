@@ -1,183 +1,110 @@
-"""Findings/verdicts lookup by their own cache keys. See docs/design.md §7.2
-and the schema.sql header comment — this module is what makes "re-score
-without re-reading the repo" and "re-explore without re-scoring" both true.
-"""
+"""Cache reads and writes, each by its own key. See schema.sql for why facts
+and model outputs are cached separately."""
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, datetime
 
-from gitcrawl.models import Findings, PillarVerdict
+from gitcrawl.collectors.base import Fact
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def create_run(
+def save_fact(
     conn: sqlite3.Connection,
     *,
     repo: str,
     commit_sha: str,
-    rubric_version: str,
-    config_hash: str,
-    investigator_model: str,
-    scorer_model: str,
-) -> int:
-    cur = conn.execute(
-        """INSERT INTO runs
-           (repo, commit_sha, rubric_version, config_hash,
-            investigator_model, scorer_model, started_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (repo, commit_sha, rubric_version, config_hash, investigator_model, scorer_model, _now()),
-    )
-    conn.commit()
-    return cur.lastrowid
-
-
-def finish_run(conn: sqlite3.Connection, run_id: int, total_score: float | None, rubric_coverage: float) -> None:
+    collector: str,
+    params_hash: str,
+    collector_version: str,
+    snapshot_bucket: str,
+    fact: Fact,
+) -> None:
+    """Never called for an error fact (see collectors/runner.py); refuses one anyway."""
+    if not fact.ok:
+        raise ValueError("refusing to cache a failed fact")
     conn.execute(
-        "UPDATE runs SET total_score = ?, rubric_coverage = ? WHERE id = ?",
-        (total_score, rubric_coverage, run_id),
-    )
-    conn.commit()
-
-
-def save_findings(
-    conn: sqlite3.Connection,
-    *,
-    run_id: int,
-    commit_sha: str,
-    tool_version: str,
-    filter_version: str,
-    findings: Findings,
-) -> int:
-    """Upsert by (commit_sha, pillar, tool_version, filter_version)."""
-    cur = conn.execute(
-        """INSERT INTO findings
-               (run_id, commit_sha, pillar, payload_json, evidence_coverage,
-                stopped_reason, tool_version, filter_version, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT (commit_sha, pillar, tool_version, filter_version)
-           DO UPDATE SET run_id = excluded.run_id,
-                         payload_json = excluded.payload_json,
-                         evidence_coverage = excluded.evidence_coverage,
-                         stopped_reason = excluded.stopped_reason,
-                         created_at = excluded.created_at
-           RETURNING id""",
+        """INSERT INTO facts (repo, commit_sha, collector, params_hash, collector_version,
+                              snapshot_bucket, payload_json, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (repo, commit_sha, collector, params_hash, collector_version, snapshot_bucket)
+           DO UPDATE SET payload_json = excluded.payload_json, created_at = excluded.created_at""",
         (
-            run_id,
+            repo,
             commit_sha,
-            findings.pillar,
-            findings.model_dump_json(),
-            findings.evidence_coverage,
-            findings.stopped_reason,
-            tool_version,
-            filter_version,
+            collector,
+            params_hash,
+            collector_version,
+            snapshot_bucket,
+            fact.model_dump_json(include={"data", "citations"}),
             _now(),
         ),
     )
-    row = cur.fetchone()
     conn.commit()
-    return row["id"]
 
 
-def load_findings(
+def load_fact(
     conn: sqlite3.Connection,
     *,
+    repo: str,
     commit_sha: str,
-    pillar: str,
-    tool_version: str,
-    filter_version: str,
-) -> tuple[int, Findings] | None:
+    collector: str,
+    params_hash: str,
+    collector_version: str,
+    snapshot_bucket: str,
+) -> Fact | None:
     row = conn.execute(
-        """SELECT id, payload_json FROM findings
-           WHERE commit_sha = ? AND pillar = ? AND tool_version = ? AND filter_version = ?""",
-        (commit_sha, pillar, tool_version, filter_version),
+        """SELECT payload_json FROM facts
+           WHERE repo = ? AND commit_sha = ? AND collector = ? AND params_hash = ?
+             AND collector_version = ? AND snapshot_bucket = ?""",
+        (repo, commit_sha, collector, params_hash, collector_version, snapshot_bucket),
     ).fetchone()
     if row is None:
         return None
-    return row["id"], Findings.model_validate_json(row["payload_json"])
+    payload = json.loads(row["payload_json"])
+    return Fact(check_id="", collector=collector, data=payload["data"], citations=payload["citations"])
 
 
-def save_verdict(
+def save_model_output(
     conn: sqlite3.Connection,
     *,
-    findings_id: int,
-    rubric_version: str,
-    scorer_model: str,
-    verdict: PillarVerdict,
-) -> int:
-    """Upsert by (findings_id, rubric_version, scorer_model)."""
-    cur = conn.execute(
-        """INSERT INTO verdicts
-               (findings_id, pillar, score, confidence, abstained,
-                justification, rubric_version, scorer_model, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT (findings_id, rubric_version, scorer_model)
-           DO UPDATE SET score = excluded.score,
-                         confidence = excluded.confidence,
-                         abstained = excluded.abstained,
-                         justification = excluded.justification,
-                         created_at = excluded.created_at
-           RETURNING id""",
-        (
-            findings_id,
-            verdict.pillar,
-            verdict.score,
-            verdict.confidence,
-            int(verdict.abstained),
-            verdict.justification,
-            rubric_version,
-            scorer_model,
-            _now(),
-        ),
-    )
-    row = cur.fetchone()
-    conn.commit()
-    return row["id"]
-
-
-def load_verdict(
-    conn: sqlite3.Connection,
-    *,
-    findings_id: int,
-    rubric_version: str,
-    scorer_model: str,
-) -> PillarVerdict | None:
-    row = conn.execute(
-        """SELECT pillar, score, confidence, abstained, justification FROM verdicts
-           WHERE findings_id = ? AND rubric_version = ? AND scorer_model = ?""",
-        (findings_id, rubric_version, scorer_model),
-    ).fetchone()
-    if row is None:
-        return None
-    return PillarVerdict(
-        pillar=row["pillar"],
-        score=row["score"],
-        confidence=row["confidence"],
-        abstained=bool(row["abstained"]),
-        justification=row["justification"],
-    )
-
-
-def save_budget(
-    conn: sqlite3.Connection,
-    *,
-    run_id: int,
-    pillar: str,
-    allocated: int,
-    spent: int,
-    excluded_files: int,
-    examined_files: int,
+    kind: str,
+    repo: str,
+    commit_sha: str,
+    owner_id: str,
+    input_hash: str,
+    model: str,
+    payload: dict,
 ) -> None:
     conn.execute(
-        """INSERT INTO budget (run_id, pillar, allocated, spent, excluded_files, examined_files)
-           VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT (run_id, pillar) DO UPDATE SET
-               allocated = excluded.allocated, spent = excluded.spent,
-               excluded_files = excluded.excluded_files, examined_files = excluded.examined_files""",
-        (run_id, pillar, allocated, spent, excluded_files, examined_files),
+        """INSERT INTO model_outputs
+               (kind, repo, commit_sha, owner_id, input_hash, model, payload_json, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (kind, repo, commit_sha, owner_id, input_hash, model)
+           DO UPDATE SET payload_json = excluded.payload_json, created_at = excluded.created_at""",
+        (kind, repo, commit_sha, owner_id, input_hash, model, json.dumps(payload), _now()),
     )
     conn.commit()
+
+
+def load_model_output(
+    conn: sqlite3.Connection,
+    *,
+    kind: str,
+    repo: str,
+    commit_sha: str,
+    owner_id: str,
+    input_hash: str,
+    model: str,
+) -> dict | None:
+    row = conn.execute(
+        """SELECT payload_json FROM model_outputs
+           WHERE kind = ? AND repo = ? AND commit_sha = ? AND owner_id = ? AND input_hash = ? AND model = ?""",
+        (kind, repo, commit_sha, owner_id, input_hash, model),
+    ).fetchone()
+    return None if row is None else json.loads(row["payload_json"])

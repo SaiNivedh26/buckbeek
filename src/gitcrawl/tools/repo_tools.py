@@ -1,9 +1,9 @@
-"""The three tools an investigator gets: list_directory, read_file,
-search_repo. See docs/design.md §6.
+"""The three repository tools a judgement agent gets: list_directory,
+read_file, search_repo. See docs/design.md.
 
 Every tool in this module is built by build_tools() for one specific
-(RepoHandle, pillar, BudgetLedger) — never shared across pillars, because
-metering and citations both need to know which pillar spent the call.
+(repo root, agent id, BudgetLedger) — never shared across agents, because
+metering and citation checks both need to know which agent spent the call.
 Rules enforced here, not left to agent discipline:
 
   - paths are confined to the repo root (no ../ escape)
@@ -31,7 +31,7 @@ from gitcrawl.ranking import rank_candidates
 from gitcrawl.tools.filters import is_binary_extension, is_excluded_dir, is_excluded_file
 from gitcrawl.tools.wrapping import wrap_untrusted
 
-BUDGET_EXHAUSTED_MARKER = "BUDGET_EXHAUSTED: no tool calls remain for this pillar."
+BUDGET_EXHAUSTED_MARKER = "BUDGET_EXHAUSTED: no tool calls remain for this agent."
 NOT_FOUND_MARKER = "ERROR: file not found: {path}"
 ESCAPE_MARKER = "ERROR: path escapes the repository root, refused: {path}"
 BINARY_MARKER = "ERROR: binary or excluded file, not readable as text: {path}"
@@ -62,17 +62,53 @@ def _meter(ctx: ToolContext) -> bool:
     return True
 
 
-def build_tools(ctx: ToolContext) -> list[Function]:
-    """Build the three repo tools bound to one investigator's context."""
+def _make_failed_call_hook(ctx: ToolContext):
+    """A malformed call (wrong/extra keyword argument, e.g. a weaker model
+    guessing at a `limit` param that doesn't exist) is rejected by pydantic
+    before our function body — and therefore _meter() — ever runs. That
+    call is still a real spend against the provider's rate limit, so the
+    scope log should say so even though it can't count toward `spent`
+    (no work happened; there's nothing to have spent it on). This hook
+    wraps every tool call and records the miss before re-raising, so the
+    failure still surfaces to Agno's own retry/repair handling unchanged.
+    """
+
+    def hook(function_name: str, func, arguments: dict):
+        try:
+            return func(**arguments)
+        except Exception:
+            ctx.ledger.record_failed_call(ctx.pillar)
+            raise
+
+    return hook
+
+
+def _make_pacing_hook(limiter):
+    """Every tool call is followed by another model request inside Agno's
+    loop, so pace here too (see agents/limiter.py)."""
+
+    def hook(function_name: str, func, arguments: dict):
+        limiter.acquire_sync()
+        return func(**arguments)
+
+    return hook
+
+
+def build_tools(ctx: ToolContext, limiter=None) -> list[Function]:
+    """Build the three repo tools bound to one agent's context."""
     cfg = get_config()
+    failed_call_hook = _make_failed_call_hook(ctx)
+    hooks = [failed_call_hook] if limiter is None else [_make_pacing_hook(limiter), failed_call_hook]
 
     @tool(
         name="list_directory",
         description="List files under a path in the repository, ranked by likely relevance.",
+        tool_hooks=hooks,
     )
     def list_directory(path: str = ".") -> str:
-        """List files under `path` (relative to the repo root).
-        Excludes vendored/generated/binary content automatically.
+        """List files under `path` (relative to the repo root). Takes ONLY
+        the one argument listed below — no other keyword arguments are
+        accepted. Excludes vendored/generated/binary content automatically.
 
         Calling this with "." (the root) walks the WHOLE repository and
         returns a ranked shortlist of the most informative files anywhere
@@ -119,12 +155,22 @@ def build_tools(ctx: ToolContext) -> list[Function]:
 
         return wrap_untrusted(f"list_directory({path})", body)
 
-    @tool(name="read_file", description="Read a file's text content from the repository.")
-    def read_file(path: str) -> str:
-        """Read the contents of `path` (relative to the repo root).
+    @tool(
+        name="read_file",
+        description="Read a file's text content from the repository.",
+        tool_hooks=hooks,
+    )
+    def read_file(path: str, limit: int | None = None) -> str:
+        """Read the contents of `path` (relative to the repo root). Takes
+        ONLY the two arguments listed below — no other keyword arguments
+        are accepted.
 
         Args:
             path: File path relative to the repo root.
+            limit: Optional. If given, return at most this many lines from
+                the start of the file, instead of the whole thing. Useful
+                for a quick look at a large file (e.g. a long CHANGELOG)
+                without spending your budget on the rest of it.
         """
         if not _meter(ctx):
             return BUDGET_EXHAUSTED_MARKER
@@ -142,25 +188,42 @@ def build_tools(ctx: ToolContext) -> list[Function]:
         except OSError:
             return NOT_FOUND_MARKER.format(path=path)
 
-        truncated = False
+        byte_truncated = False
         if len(raw) > cfg.budget.max_file_bytes:
             raw = raw[: cfg.budget.max_file_bytes]
-            truncated = True
+            byte_truncated = True
 
         try:
             text = raw.decode("utf-8")
         except UnicodeDecodeError:
             return BINARY_MARKER.format(path=path)
 
-        ctx.ledger.examined_files += 1
-        if truncated:
-            text += f"\n\n[TRUNCATED at {cfg.budget.max_file_bytes} bytes]"
+        line_truncated = False
+        if limit is not None and limit >= 0:
+            lines = text.splitlines()
+            if len(lines) > limit:
+                text = "\n".join(lines[:limit])
+                line_truncated = True
+
+        ctx.ledger.record_read(ctx.pillar, str(resolved.relative_to(ctx.root.resolve())))
+        notes = []
+        if byte_truncated:
+            notes.append(f"truncated at {cfg.budget.max_file_bytes} bytes")
+        if line_truncated:
+            notes.append(f"truncated at {limit} lines (your own limit argument)")
+        if notes:
+            text += "\n\n[" + "; ".join(notes) + "]"
         return wrap_untrusted(path, text)
 
-    @tool(name="search_repo", description="Search the repository for a regex pattern.")
+    @tool(
+        name="search_repo",
+        description="Search the repository for a regex pattern.",
+        tool_hooks=hooks,
+    )
     def search_repo(pattern: str, file_glob: str = "*") -> str:
         """Search candidate files for a regex pattern and return matching
-        lines with their file and line number.
+        lines with their file and line number. Takes ONLY the two
+        arguments listed below — no other keyword arguments are accepted.
 
         Args:
             pattern: A regular expression to search for.
@@ -190,6 +253,7 @@ def build_tools(ctx: ToolContext) -> list[Function]:
                         for lineno, line in enumerate(f, start=1):
                             if regex.search(line):
                                 matches.append(f"{rel}:{lineno}: {line.strip()[:200]}")
+                                ctx.ledger.record_read(ctx.pillar, rel)
                                 if len(matches) >= max_matches:
                                     break
                 except OSError:
