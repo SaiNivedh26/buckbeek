@@ -4,6 +4,7 @@ locals {
     "artifactregistry.googleapis.com",
     "cloudbuild.googleapis.com",
     "cloudfunctions.googleapis.com",
+    "cloudtasks.googleapis.com",
     "eventarc.googleapis.com",
     "iamcredentials.googleapis.com",
     "logging.googleapis.com",
@@ -30,8 +31,15 @@ resource "google_storage_bucket" "submissions" {
   uniform_bucket_level_access = true
   force_destroy               = false
 
+  versioning {
+    enabled = true
+  }
+
   lifecycle_rule {
-    condition { age = var.object_ttl_days }
+    condition {
+      age            = var.object_ttl_days
+      matches_prefix = ["submissions/"]
+    }
     action { type = "Delete" }
   }
 
@@ -55,6 +63,47 @@ resource "google_service_account" "control" {
 resource "google_service_account" "analyzer" {
   account_id   = "build-submit-analyzer"
   display_name = "Build Submit analyzer function"
+}
+
+resource "google_service_account" "cleanup" {
+  account_id   = "build-submit-cleanup"
+  display_name = "Build Submit scheduled cleanup caller"
+}
+
+resource "google_cloud_tasks_queue" "cleanup" {
+  name     = "build-submit-cleanup"
+  location = var.region
+
+  retry_config {
+    max_attempts       = 5
+    max_retry_duration = "3600s"
+  }
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_project_iam_member" "control_tasks_enqueuer" {
+  project = var.project_id
+  role    = "roles/cloudtasks.enqueuer"
+  member  = "serviceAccount:${google_service_account.control.email}"
+}
+
+resource "google_project_iam_member" "analyzer_tasks_enqueuer" {
+  project = var.project_id
+  role    = "roles/cloudtasks.enqueuer"
+  member  = "serviceAccount:${google_service_account.analyzer.email}"
+}
+
+resource "google_service_account_iam_member" "control_acts_as_cleanup" {
+  service_account_id = google_service_account.cleanup.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.control.email}"
+}
+
+resource "google_service_account_iam_member" "analyzer_acts_as_cleanup" {
+  service_account_id = google_service_account.cleanup.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.analyzer.email}"
 }
 
 resource "google_storage_bucket_iam_member" "control_objects" {
@@ -162,11 +211,13 @@ resource "google_cloudfunctions2_function" "control" {
   service_config {
     available_memory      = "256M"
     timeout_seconds       = 60
-    max_instance_count    = 10
+    max_instance_count    = 5
     service_account_email = google_service_account.control.email
     environment_variables = {
-      SUBMISSIONS_BUCKET = google_storage_bucket.submissions.name
-      MAX_ARCHIVE_BYTES  = tostring(var.max_archive_bytes)
+      SUBMISSIONS_BUCKET      = google_storage_bucket.submissions.name
+      MAX_ARCHIVE_BYTES       = tostring(var.max_archive_bytes)
+      CLEANUP_QUEUE           = google_cloud_tasks_queue.cleanup.id
+      CLEANUP_SERVICE_ACCOUNT = google_service_account.cleanup.email
     }
   }
 
@@ -179,6 +230,14 @@ resource "google_cloud_run_service_iam_member" "control_invoker" {
   service  = google_cloudfunctions2_function.control.name
   role     = "roles/run.invoker"
   member   = var.invoker_member
+}
+
+resource "google_cloud_run_service_iam_member" "cleanup_invoker" {
+  project  = var.project_id
+  location = var.region
+  service  = google_cloudfunctions2_function.control.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.cleanup.email}"
 }
 
 resource "google_cloudfunctions2_function" "analyzer" {
@@ -202,12 +261,11 @@ resource "google_cloudfunctions2_function" "analyzer" {
     max_instance_count    = 5
     service_account_email = google_service_account.analyzer.email
     environment_variables = {
-      SUBMISSIONS_BUCKET = google_storage_bucket.submissions.name
-      GCP_PROJECT        = var.project_id
-      GEMINI_LOCATION    = var.gemini_location
-      GEMINI_MODEL       = var.gemini_model
-      MAX_CONTEXT_BYTES  = tostring(var.max_context_bytes)
-      MAX_ARCHIVE_BYTES  = tostring(var.max_archive_bytes)
+      SUBMISSIONS_BUCKET      = google_storage_bucket.submissions.name
+      GITCRAWL_AGENT_URL      = "https://gitcrawl-agent-2zjfzfxtdq-uc.a.run.app"
+      CLEANUP_QUEUE           = google_cloud_tasks_queue.cleanup.id
+      CLEANUP_URL             = google_cloudfunctions2_function.control.service_config[0].uri
+      CLEANUP_SERVICE_ACCOUNT = google_service_account.cleanup.email
     }
   }
 

@@ -1,3 +1,4 @@
 functions-framework==3.*
-google-auth>=2.0.0,<3.0.0
-google-cloud-storage==3.*
+google-auth>=2.30
+google-cloud-storage>=2.18
+google-cloud-tasks>=2.16
