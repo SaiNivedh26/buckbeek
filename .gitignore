@@ -9,3 +9,7 @@ dist/
 build/
 .coverage
 htmlcov/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan

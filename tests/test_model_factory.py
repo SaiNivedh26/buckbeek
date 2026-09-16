@@ -16,6 +16,12 @@ import pytest
 from gitcrawl.agents.model_factory import ModelFactoryError, build_model
 
 
+@pytest.fixture(autouse=True)
+def _select_local_api_key_mode(monkeypatch):
+    """Keep local-key tests independent of the Cloud Run image environment."""
+    monkeypatch.delenv("GITCRAWL_GOOGLE_VERTEXAI", raising=False)
+
+
 def test_google_provider_accepts_gemini_api_key_as_fallback(monkeypatch):
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.setenv("GEMINI_API_KEY", "fake-key-for-test")
@@ -40,3 +46,12 @@ def test_google_provider_raises_clearly_when_neither_key_set(monkeypatch):
 def test_unknown_provider_raises_clearly():
     with pytest.raises(ModelFactoryError, match="unknown model provider"):
         build_model("openai", "gpt-4")
+
+
+def test_google_provider_supports_vertex_adc_without_api_key(monkeypatch):
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("GITCRAWL_GOOGLE_VERTEXAI", "true")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    model = build_model("google", "gemini-test")
+    assert model is not None

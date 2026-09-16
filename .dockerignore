@@ -1,0 +1,11 @@
+.git
+.venv
+.env
+__pycache__
+.pytest_cache
+.ruff_cache
+dist
+build
+*.pyc
+*.json
+!pyproject.toml

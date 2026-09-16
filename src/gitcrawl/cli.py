@@ -11,6 +11,8 @@ from typing import Annotated
 import typer
 from rich.console import Console
 from rich.markup import escape
+from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn, TimeElapsedColumn
+from rich.table import Table
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 console = Console()
@@ -155,6 +157,102 @@ def evaluate(
     if json_out:
         json_out.write_text(report.model_dump_json(indent=2))
         console.print(f"[dim]Wrote {json_out}[/dim]")
+
+
+@app.command("submit")
+def submit_command(
+    endpoint: Annotated[str, typer.Option(envvar="GITCRAWL_ENDPOINT", help="Authenticated control API URL.")],
+    directory: Annotated[Path, typer.Argument(help="Repository directory to upload.")] = Path("."),
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Print machine-readable JSON and disable interactive progress.")
+    ] = False,
+) -> None:
+    """Upload a repository and wait for its tailored hosted evaluation."""
+    from gitcrawl.hosted.client import submit
+
+    phase_progress = {
+        "uploaded": 18,
+        "inspecting": 26,
+        "generating_eval": 38,
+        "planning": 50,
+        "deploying": 64,
+        "routing": 74,
+        "analyzing": 88,
+        "complete": 100,
+    }
+    progress = None
+    task_id = None
+    last_plain_phase = None
+
+    if not json_output and console.is_terminal:
+        progress = Progress(
+            SpinnerColumn(style="cyan"),
+            TextColumn("[bold cyan]{task.description}"),
+            BarColumn(bar_width=32),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        )
+        progress.start()
+        task_id = progress.add_task("Preparing repository archive", total=100)
+
+    def event(kind: str, value: dict) -> None:
+        nonlocal last_plain_phase
+        if json_output:
+            return
+        if kind == "agent_id_added":
+            console.print(f"[green]✓[/green] Added Agent-ID {value['agent_id']} to {value['path']}")
+            return
+        if kind == "download":
+            if progress is not None:
+                progress.update(task_id, completed=98, description="Downloading generated eval.md")
+            console.print(f"[green]✓[/green] Downloaded eval.md -> {value['path']}")
+            return
+        if kind == "upload":
+            completed = 5 + int(12 * value["sent"] / max(value["total"], 1))
+            if progress is not None:
+                progress.update(task_id, completed=completed, description="Uploading repository securely")
+            return
+        if kind == "submission":
+            console.print(f"[dim]Submission {value['submission_id']}[/dim]")
+            return
+        if kind == "phase":
+            phase = value.get("phase") or value.get("status")
+            description = value.get("message") or str(phase).replace("_", " ").title()
+            if progress is not None:
+                progress.update(task_id, completed=phase_progress.get(phase, 20), description=description)
+            elif phase != last_plain_phase:
+                console.print(f"[cyan]→[/cyan] {phase}: {description}")
+                last_plain_phase = phase
+
+    try:
+        try:
+            cli_version = _pkg_version("gitcrawl")
+        except Exception:
+            cli_version = "0.1.0"
+        result = submit(directory, endpoint, cli_version=cli_version, on_event=event)
+    except Exception as exc:
+        if progress is not None:
+            progress.stop()
+        _fail(exc)
+    if progress is not None:
+        progress.update(task_id, completed=100, description="Analysis complete")
+        progress.stop()
+    if json_output:
+        console.print_json(data=result)
+        return
+
+    evaluation = result.get("evaluation") or {}
+    summary = Table(title="GitCrawl hosted analysis", show_header=False, box=None)
+    summary.add_column(style="bold")
+    summary.add_column()
+    summary.add_row("Agent", str(result.get("agent_id", "unknown")))
+    summary.add_row("Revision", str(result.get("revision", "unknown")))
+    summary.add_row("Eval hash", str(result.get("active_eval_hash", "unknown")))
+    score = evaluation.get("total_score")
+    summary.add_row("Score", "not assessed" if score is None else f"{score:.2f}/10")
+    summary.add_row("Deployment", "created" if result.get("deployed") else "reused")
+    console.print(summary)
 
 
 if __name__ == "__main__":

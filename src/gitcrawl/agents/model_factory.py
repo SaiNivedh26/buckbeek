@@ -39,7 +39,12 @@ def build_model(provider: str, model_id: str) -> Model:
             f"unknown model provider: {provider!r} (supported: {sorted(_ENV_VARS_BY_PROVIDER)})"
         )
     env_vars = _ENV_VARS_BY_PROVIDER[provider]
-    if not any(os.getenv(v) for v in env_vars):
+    vertex_ai = provider == "google" and os.getenv("GITCRAWL_GOOGLE_VERTEXAI", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    if not vertex_ai and not any(os.getenv(v) for v in env_vars):
         names = " or ".join(env_vars)
         raise ModelFactoryError(
             f"none of [{names}] is set (required for provider={provider!r}). "
@@ -57,6 +62,18 @@ def build_model(provider: str, model_id: str) -> Model:
     if provider == "google":
         from agno.models.google import Gemini
 
+        if vertex_ai:
+            project = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT")
+            if not project:
+                raise ModelFactoryError(
+                    "GOOGLE_CLOUD_PROJECT or GCP_PROJECT is required when GITCRAWL_GOOGLE_VERTEXAI=true"
+                )
+            return Gemini(
+                id=model_id,
+                vertexai=True,
+                project_id=project,
+                location=os.getenv("GOOGLE_CLOUD_LOCATION", "global"),
+            )
         return Gemini(id=model_id)
 
     raise ModelFactoryError(f"unreachable: provider {provider!r} passed validation but has no builder")
