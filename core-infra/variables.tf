@@ -14,6 +14,16 @@ variable "invoker_member" {
   type        = string
 }
 
+variable "gitcrawl_agent_url" {
+  description = "Authenticated GitCrawl Cloud Run controller URL. Use a valid HTTPS placeholder only during first-time bootstrap, then reapply with the infra output."
+  type        = string
+
+  validation {
+    condition     = startswith(var.gitcrawl_agent_url, "https://")
+    error_message = "gitcrawl_agent_url must be an HTTPS URL."
+  }
+}
+
 variable "gemini_location" {
   description = "Vertex AI location used by the Google Gen AI SDK."
   type        = string

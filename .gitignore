@@ -20,3 +20,5 @@ core-infra/terraform.tfstate.*
 core-infra/*.tfvars
 core-infra/__pycache__/
 core-infra/*.pyc
+
+arch.md

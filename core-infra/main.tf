@@ -262,7 +262,7 @@ resource "google_cloudfunctions2_function" "analyzer" {
     service_account_email = google_service_account.analyzer.email
     environment_variables = {
       SUBMISSIONS_BUCKET      = google_storage_bucket.submissions.name
-      GITCRAWL_AGENT_URL      = "https://gitcrawl-agent-2zjfzfxtdq-uc.a.run.app"
+      GITCRAWL_AGENT_URL      = var.gitcrawl_agent_url
       CLEANUP_QUEUE           = google_cloud_tasks_queue.cleanup.id
       CLEANUP_URL             = google_cloudfunctions2_function.control.service_config[0].uri
       CLEANUP_SERVICE_ACCOUNT = google_service_account.cleanup.email
