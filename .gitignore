@@ -13,3 +13,10 @@ htmlcov/
 *.tfstate
 *.tfstate.*
 *.tfplan
+
+core-infra/.terraform/
+core-infra/terraform.tfstate
+core-infra/terraform.tfstate.*
+core-infra/*.tfvars
+core-infra/__pycache__/
+core-infra/*.pyc
