@@ -13,11 +13,24 @@ import urllib.request
 import uuid
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from gitcrawl.hosted.rubric import EVAL_FILE, parse_agent_id, repository_key, with_agent_id
 
 _EXCLUDED_PARTS = {".git", ".venv", "venv", "node_modules", "dist", "build", "__pycache__", ".terraform"}
 _EXCLUDED_NAMES = {".env", "qwik.json"}
+
+
+def validate_endpoint(endpoint: str) -> str:
+    """Return a normalized absolute control URL or raise a useful CLI error."""
+    value = endpoint.strip().rstrip("/")
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(
+            "GitCrawl control endpoint is missing or invalid. Set GITCRAWL_ENDPOINT to the "
+            "absolute HTTPS control URL, or pass --endpoint https://... explicitly."
+        )
+    return value
 
 
 def discover_repository_key(root: Path) -> str:
@@ -146,6 +159,7 @@ def submit(
     on_event: Callable[[str, dict], None] | None = None,
 ) -> dict:
     root = root.resolve()
+    endpoint = validate_endpoint(endpoint)
     agent_id, inserted = ensure_local_agent_id(root)
     if on_event and inserted:
         on_event("agent_id_added", {"agent_id": agent_id, "path": str(root / EVAL_FILE)})
@@ -153,7 +167,9 @@ def submit(
     token = identity_token(endpoint)
     with tempfile.TemporaryDirectory(prefix="gitcrawl-upload-") as temp:
         archive = Path(temp) / "source.tar.gz"
-        build_archive(root, archive)
+        file_count = build_archive(root, archive)
+        if on_event:
+            on_event("archive", {"files": file_count, "size": archive.stat().st_size})
         upload = _json_request(
             f"{endpoint.rstrip('/')}/uploads",
             token,

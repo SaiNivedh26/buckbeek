@@ -52,6 +52,9 @@ gitcrawl submit --json \
   /path/to/your/repository
 ```
 
+Interactive terminals use the live dashboard by default. Use `--no-tui` for line-oriented phase
+updates, or `--json` for JSON-only automation output.
+
 The first submission normally moves through:
 
 ```text
@@ -79,6 +82,15 @@ Version: 1.0
 - An edited `eval.md` keeps the same Agent-ID and creates a new immutable version.
 - Submission objects are removed ten minutes after completion; durable agent versions remain.
 
+
+<br>
+
+## Example (analysing with existing plan)
+
+<p align="center"><img src="assets/example-reuse.png" alt="demo-gc" /></p>
+
+<br>
+    
 ## Deploy to GCP
 
 ### Prerequisites
