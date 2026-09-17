@@ -2,7 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from gitcrawl.hosted.client import discover_repository_key, ensure_local_agent_id, submit, sync_generated_eval
+from gitcrawl.hosted.client import (
+    discover_repository_key,
+    ensure_local_agent_id,
+    submit,
+    sync_generated_eval,
+    validate_endpoint,
+)
 from gitcrawl.hosted.rubric import (
     eval_hash,
     find_eval,
@@ -55,6 +61,16 @@ def test_local_repository_id_is_persisted(monkeypatch, tmp_path: Path):
 def test_generated_eval_is_atomic_and_never_overwrites(tmp_path: Path):
     sync_generated_eval(tmp_path, b"generated\n")
     assert (tmp_path / "eval.md").read_text() == "generated\n"
+
+
+@pytest.mark.parametrize("endpoint", ["", "   ", "/uploads", "control.example"])
+def test_control_endpoint_must_be_absolute(endpoint):
+    with pytest.raises(ValueError, match="GITCRAWL_ENDPOINT"):
+        validate_endpoint(endpoint)
+
+
+def test_control_endpoint_is_normalized():
+    assert validate_endpoint(" https://control.example/ ") == "https://control.example"
     with pytest.raises(FileExistsError):
         sync_generated_eval(tmp_path, b"replacement\n")
     assert (tmp_path / "eval.md").read_text() == "generated\n"
